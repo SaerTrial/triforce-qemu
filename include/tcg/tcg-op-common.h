@@ -13,7 +13,7 @@
 #include "exec/helper-gen-common.h"
 
 /* AFL-related */
-typedef uint32_t (*ArchHelper)(CPUState *);
+typedef uint32_t (*ArchHelper)(CPUState *, uint64_t pc);
 void gen_aflBBlock(ArchHelper func, CPUState* cpu, uint64_t pc);
 
 TCGv_i32 tcg_constant_i32(int32_t val);
