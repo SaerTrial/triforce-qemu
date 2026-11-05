@@ -24,7 +24,7 @@ void hook_port_mem_concrete(void *host, size_t len)
 {
 }
 
-void hook_port_reg_concrete(CPUState *cs, unsigned reg)
+void hook_port_reg_concrete(CPUState *cs, void *reg)
 {
 }
 
