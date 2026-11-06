@@ -23,7 +23,7 @@
 #include "hw/arm/boot.h"
 #include "hw/arm/armv7m.h"
 #include "target/arm/cpu.h"
-#include "hw/rehosting/arm/function_hooks.h"
+#include "hooks/hook_engine.h"
 typedef ARMCPU THISCPU;
 #endif
 
@@ -37,7 +37,6 @@ typedef ARMCPU THISCPU;
 
 
 extern const char *replayConf;
-GHashTable *patched_func_htable = NULL;
 GHashTable *exit_at_htable = NULL;
 
 
@@ -326,22 +325,6 @@ static void configure_mmio(QDict * mmio) {
         g_ptr_array_add(mmio_ranges, r);
 }
 
-static void create_patch(QDict * patch_entry){
-    if (!patched_func_htable) patched_func_htable = g_hash_table_new(NULL, NULL);
-
-    uint32_t addr = strtol(
-                qstring_get_str(qobject_to(QString, qdict_get(patch_entry, "addr"))),
-                NULL,
-                0);
-    
-    void* element = NULL;
-    if(! (element = g_hash_table_lookup(patched_func_htable, (gpointer)((uint64_t)addr)))) {
-        if (qdict_haskey(patch_entry, "name"))
-            element = (void*)qstring_get_str(qobject_to(QString, qdict_get(patch_entry, "name")));
-        g_hash_table_insert(patched_func_htable, (gpointer)((uint64_t)addr), (gpointer)element);
-    }
-}
-
 static void create_exit_at(QDict * exit_at_entry) {
         if (!exit_at_htable) exit_at_htable = g_hash_table_new(NULL, NULL);
         
@@ -365,11 +348,9 @@ static void create_exit_at(QDict * exit_at_entry) {
 }
 
 static void print_configuration(void){
-        /* patch functions */
         GHashTableIter iter;
         uint32_t addr_iter;
         const char* func_name = NULL;
-        g_hash_table_iter_init(&iter, patched_func_htable);
         uint32_t cnt = 0;
 
         qemu_log_mask(LOG_AFL,
@@ -392,17 +373,6 @@ static void print_configuration(void){
                 "%s: [%d] ram_start: 0x%x ram_end: 0x%x \n", __func__, cnt, r->start, r->end);
                 cnt++;
         }
-
-        cnt = 0;
-
-        qemu_log_mask(LOG_AFL,
-                "[%s] --------------------------patch function----------------------------\n", __func__);
-
-        while (g_hash_table_iter_next(&iter, (gpointer)&addr_iter, (gpointer)&func_name)) {
-                qemu_log_mask(LOG_AFL,
-                "%s: [%d] addr: 0x%x patched_function: %s \n", __func__, cnt, addr_iter, func_name);
-                cnt++;
-        } 
 
         /* afl conf */
         qemu_log_mask(LOG_AFL,
@@ -507,7 +477,7 @@ static THISCPU *create_cpu(MachineState * ms, QDict *conf){
         cpuu->env.thumb = (entrypoint & 1) == 1 ? 1 : 0;
 
 
-        assert(return_reg_index_by_name("r0") == 0 && return_reg_index_by_name("R0") == 0 && return_reg_index_by_name("XXX") == -1);
+        assert(hook_reg_index("r0") == 0 && hook_reg_index("R0") == 0 && hook_reg_index("XXX") == -1);
         
         if (qdict_haskey(conf, "init_state")) {
                 QList *init_reg_entries = qobject_to(QList, qdict_get(conf, "init_state"));
@@ -522,7 +492,7 @@ static THISCPU *create_cpu(MachineState * ms, QDict *conf){
                         NULL,
                         0);
 
-                        int reg_idx = return_reg_index_by_name(qdict_entry->key);
+                        int reg_idx = hook_reg_index(qdict_entry->key);
                         
                         if ( reg_idx != -1) {
                                 qemu_log_mask(LOG_AFL, "[%s] init reg(%s) with value(0x%x), idx: %d \n",
@@ -549,6 +519,7 @@ static void machine_init(MachineState *machine)
         kernel_filename = machine->kernel_filename;
 
         conf = load_configuration(kernel_filename);
+        hook_load_config(conf, kernel_filename);        /* "symbols" and "patch" */
 
         if (covFile) {
                 cov_fp = fopen(covFile, "w");
@@ -592,12 +563,6 @@ static void machine_init(MachineState *machine)
                         QListEntry *mmio_entry;
                         QLIST_FOREACH_ENTRY(mmio_entries, mmio_entry) {
                                 configure_mmio(qobject_to(QDict, qlist_entry_obj(mmio_entry)));
-                        }
-                }else if (!strcmp(entry->key, "patch")) {
-                        QList * patch_entries = qobject_to(QList, entry->value);
-                        QListEntry *patch_entry;
-                        QLIST_FOREACH_ENTRY(patch_entries, patch_entry) {
-                                create_patch(qobject_to(QDict, qlist_entry_obj(patch_entry)));
                         }
                 }else if (!strcmp(entry->key, "exit_at")) {
                         QList * exit_entries = qobject_to(QList, entry->value);
