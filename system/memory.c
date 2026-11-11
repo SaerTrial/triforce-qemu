@@ -36,6 +36,7 @@
 #include "exec/address-spaces.h"
 #include "patches/afl.h"
 #include "hw/rehosting/utils/mem.h"
+#include "hooks/hook_engine.h"
 
 //#define DEBUG_UNASSIGNED
 
@@ -1311,22 +1312,17 @@ static void iommu_memory_region_initfn(Object *obj)
 #define DEBUG_UNASSIGNED
 bool getFuzz(uint8_t *buf, uint32_t size);
 void loadFuzz(void);
+extern target_ulong fuzz_cursor;
 
 static uint64_t unassigned_mem_read(void *opaque, hwaddr addr,
                                     unsigned size)
 {
     uint64_t fuzzval;
+    uint64_t offset = fuzz_cursor;
 
     getFuzz((uint8_t*)&fuzzval, size);
-
-#ifdef DEBUG_UNASSIGNED
-    #if TARGET_LONG_SIZE==8
-            qemu_log_mask(LOG_AFL, "Fuzzing unassigned mem read " HWADDR_FMT_plx " = 0x%"PRIx64"\n", addr, fuzzval);
-    #elif TARGET_LONG_SIZE==4
-            qemu_log_mask(LOG_AFL, "Fuzzing unassigned mem read " HWADDR_FMT_plx " = 0x%"PRIx32"\n", addr, (uint32_t)fuzzval);
-    #endif
-#endif
-
+    hook_log_input(offset, size, "MMIO 0x%08" HWADDR_PRIx " = 0x%0*" PRIx64,
+                   addr, (int)size * 2, ldn_he_p(&fuzzval, size));
     return fuzzval;
 }
 
