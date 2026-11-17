@@ -1000,6 +1000,21 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
             uint64_t cs_base;
             uint32_t flags, cflags;
 
+            /* The block-start helper left its block at boot.target, before
+             * running it: every fuzzing run forks from this point. */
+            if (unlikely(afl_fork_pending)) {
+                afl_fork_pending = 0;
+                /*
+                 * Boot may have armed timers (SysTick), which keep the main
+                 * loop thread taking the big lock. A run forked while that
+                 * thread holds it would wait for it for ever: the thread is
+                 * not there in the fork. So hold the lock across the fork.
+                 */
+                bql_lock();
+                afl_start_fuzzing(cpu_env(cpu));
+                bql_unlock();
+            }
+
             cpu_get_tb_cpu_state(cpu_env(cpu), &pc, &cs_base, &flags);
 
             /*

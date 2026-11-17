@@ -56,10 +56,8 @@
    regular instrumentation injected via afl-as.h. */
 
 #define AFL_QEMU_CPU_SNIPPET2(env, pc) do { \
-    if((pc == afl_entry_point || (pc|1) == afl_entry_point) && pc && getenv("AFLGETWORK") == 0 && (aflFile != NULL)) { \
-      afl_setup(); \
-      afl_forkserver(env); \
-      aflStart = 1; \
+    if(afl_fork_at_entry && (pc == afl_entry_point || (pc|1) == afl_entry_point) && pc && getenv("AFLGETWORK") == 0 && (aflFile != NULL)) { \
+      afl_start_fuzzing(env); \
     } \
     afl_maybe_log(pc); \
   } while (0)
@@ -81,6 +79,8 @@ target_ulong afl_entry_point = 0, /* ELF entry point (_start) */
 
 
 int aflStart = 0;               /* we've started fuzzing */
+int afl_fork_at_entry = 1;      /* fork server starts at the entry point; 0 with boot.input */
+int afl_fork_pending = 0;       /* boot.target reached: start the fork server from the main loop */
 int aflEnableTicks = 0;         /* re-enable ticks for each test */
 int aflGotLog = 0;              /* we've seen dmesg logging */
 
@@ -290,6 +290,22 @@ void afl_forkserver(CPUArchState *env) {
 
 }
 
+
+/* Everything from here on is one fuzzing run: a fork of this process. */
+void afl_start_fuzzing(CPUArchState *env) {
+  afl_setup();
+  afl_forkserver(env);
+  aflStart = 1;
+}
+
+/* A run that failed to boot shows AFL++ no coverage, so it is never kept.
+   Byte 0 stays set: an empty map would look like a dead target. */
+void afl_discard_coverage(void) {
+  if (afl_area_ptr) {
+    memset(afl_area_ptr, 0, MAP_SIZE);
+    afl_area_ptr[0] = 1;
+  }
+}
 
 static inline target_ulong aflHash(target_ulong cur_loc) {
   if(!aflStart)

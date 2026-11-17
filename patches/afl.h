@@ -19,4 +19,11 @@ extern CPUState *restart_cpu;
 
 void afl_setup(void);
 void afl_forkserver(CPUArchState*);
+
+/* The "boot" section (hooks/hook_engine.h). */
+extern int afl_fork_at_entry;
+extern int afl_fork_pending;
+void afl_start_fuzzing(CPUArchState *env);
+void afl_discard_coverage(void);
+void switch_to_fuzz_input(void);
 #endif

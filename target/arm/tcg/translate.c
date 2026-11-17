@@ -8090,11 +8090,13 @@ static void arm_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
 
 #include "qemu/main-loop.h"
 #include "hooks/hook_engine.h"
+#include "patches/afl.h"
 
 
 void armv7m_nvic_set_pending(NVICState *s, int irq, bool secure);
 extern GHashTable *exit_at_htable;
 extern uint32_t bb_cnt;
+extern target_ulong fuzz_cursor;
 
 /* Runs at each block start; returns 1 when a hook ran and PC now points elsewhere. */
 static uint32_t arm_helper_func(CPUState *cpu, uint64_t pc){
@@ -8103,8 +8105,23 @@ static uint32_t arm_helper_func(CPUState *cpu, uint64_t pc){
 
     env->regs[15] = pc;     /* exact even if blocks are ever chained (now disabled) */
     qemu_log_mask(LOG_AFL, "[%s] executing at 0x%x ... \n",
-         __func__, (uint32_t)pc); 
-    
+         __func__, (uint32_t)pc);
+
+    switch (hook_boot_block(pc, fuzz_cursor)) {     /* the "boot" section */
+    case HOOK_BOOT_FAILED:
+        afl_discard_coverage();     /* this run did not boot: AFL++ must not keep it */
+        exit(0);
+    case HOOK_BOOT_SWITCH:
+        switch_to_fuzz_input();
+        afl_fork_pending = 1;       /* fork from the main loop, where blocks may be */
+        cpu_loop_exit_noexc(cpu);   /* translated; PC is `pc`, so this block runs next */
+    case HOOK_BOOT_GO:
+        break;
+    }
+    if (hook_booting() && exit_at_htable && g_hash_table_contains(exit_at_htable, (gpointer)pc)) {
+        hook_boot_fail("ended the run at 0x%08x before the boot target", (uint32_t)pc);
+    }
+
     if ( (element = g_hash_table_lookup(exit_at_htable, (gpointer)pc))){
         qemu_log_mask(LOG_AFL, "%s: exiting at 0x%x (%s) ... \n", __func__, (uint32_t)pc, element? (const char*) element  : "unknown"); 
         exit(0);
