@@ -1,4 +1,5 @@
 #include "afl.h"
+#include "hooks/hook_engine.h"
 
 extern target_ulong afl_start_code, afl_end_code;
 static bool input_already_given = false;
@@ -15,11 +16,13 @@ void loadFuzz(void);
 
 
 void loadFuzz(void) {
+    /* Before boot.target, reads are served from boot.input. */
+    const char *path = hook_booting() ? hook_boot_input() : aflFile;
     FILE *fp;
 
-    fp = fopen(aflFile, "rb");
+    fp = fopen(path, "rb");
     if(!fp) {
-        perror(aflFile);
+        perror(path);
         _exit(1);
     }
 
@@ -39,7 +42,18 @@ void loadFuzz(void) {
     fclose(fp);
 }
 
-
+/*
+ * The boot target is reached: drop the bytes of boot.input. The next read
+ * loads the real input file, so it takes input[0]. This runs before the fork
+ * server starts, so every forked run loads its own file.
+ */
+void switch_to_fuzz_input(void) {
+    free(fuzz);
+    fuzz = NULL;
+    fuzz_size = 0;
+    fuzz_cursor = 0;
+    input_already_given = false;
+}
 
 /* get fuzzing inputs */
 bool getFuzz(uint8_t *buf, uint32_t size) {
@@ -56,6 +70,9 @@ bool getFuzz(uint8_t *buf, uint32_t size) {
         return true;
     }
     else {
+        if (hook_booting()) {
+            hook_boot_fail("(%" PRIu64 " bytes) ran out before the boot target", (uint64_t)fuzz_size);
+        }
         qemu_log_mask(LOG_AFL,
                       "input runs out: a %u-byte read at offset %" PRIu64 " goes past the end of the %" PRIu64 "-byte input; the run ends\n",
                       size, (uint64_t)fuzz_cursor, (uint64_t)fuzz_size);
@@ -217,6 +234,9 @@ void helper_aflInterceptPanic(void)
 {
     // if(!aflStart)
     //     return;
+    if (hook_booting()) {
+        hook_boot_fail("reached the panic address 0x%08lx before the boot target", aflPanicAddr);
+    }
     qemu_log_mask(LOG_AFL,
                       "[%s] crashing.... \n", __func__);
     if (cov_fp)

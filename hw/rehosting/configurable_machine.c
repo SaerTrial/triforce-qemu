@@ -519,7 +519,8 @@ static void machine_init(MachineState *machine)
         kernel_filename = machine->kernel_filename;
 
         conf = load_configuration(kernel_filename);
-        hook_load_config(conf, kernel_filename);        /* "symbols" and "patch" */
+        hook_load_config(conf, kernel_filename);        /* "symbols", "boot" and "patch" */
+        afl_fork_at_entry = !hook_boot_input();         /* with boot.input: fork at boot.target */
 
         if (covFile) {
                 cov_fp = fopen(covFile, "w");
